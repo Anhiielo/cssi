@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>CSSI demo</title>
+  <style>
+    body { font-family: sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
+    section { border: 1px solid #ccc; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+    input, select, button { margin: 4px 0; padding: 6px; width: 100%; box-sizing: border-box; }
+    pre { background: #f4f4f4; padding: 8px; white-space: pre-wrap; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <h1>CSSI: demo</h1>
+  <button id="connect">Conectar MetaMask</button>
+  <p>Cuenta activa: <b id="acct">(ninguna)</b></p>
+
+  <section>
+    <h2>Cliente (holder)</h2>
+    <h3>Subir dirección de un activo digital</h3>
+    <input id="assetAddr" placeholder="Dirección de tu wallet o NFT, 0x...">
+    <button onclick="addAsset()">Subir a la blockchain</button>
+
+    <h3>Dar o revocar permiso</h3>
+    <input id="inst" placeholder="Dirección de la institución, 0x...">
+    <select id="gKind">
+      <option value="asset">Información de activos (asset_info)</option>
+      <option value="credit">Información de crédito (credit_info)</option>
+      <option value="digital">Activos digitales</option>
+    </select>
+    <input id="hours" type="number" value="2" min="1" placeholder="Horas de acceso">
+    <button onclick="grant()">Autorizar</button>
+    <button onclick="revoke()">Revocar</button>
+  </section>
+
+  <section>
+    <h2>Institución financiera</h2>
+    <input id="customer" placeholder="Dirección del cliente, 0x...">
+    <select id="rKind">
+      <option value="asset">asset_info</option>
+      <option value="credit">credit_info</option>
+      <option value="digital">Activos digitales</option>
+    </select>
+    <button onclick="readData()">Consultar</button>
+  </section>
+
+  <h3>Resultado</h3>
+  <pre id="out">...</pre>
+
+  <script type="module">
+    import { BrowserProvider, Contract, id, solidityPackedKeccak256 }
+      from "https://cdn.jsdelivr.net/npm/ethers@6.13.4/+esm";
+
+    const ABI = [
+      "function addDigitalAsset(address)",
+      "function grantAccess(address,bytes32,uint32)",
+      "function revokeAccess(address,bytes32)",
+      "function accessCredential(address,bytes32) returns (tuple(address issuer,string fname,bytes32 cn,bytes32 vcHash,string uri,uint64 issuedAt))",
+      "function accessDigitalAssets(address) view returns (address[])"
+    ];
+
+    // Mismas claves que usó seed.js
+    const KEYS = {
+      asset: solidityPackedKeccak256(["string", "bytes32"], ["BancoX", id("CN-ASSET-001")]),
+      credit: solidityPackedKeccak256(["string", "bytes32"], ["BuroY", id("CN-CREDIT-001")]),
+      digital: id("digital_assets"),
+    };
+
+    const out = (t) => (document.getElementById("out").textContent = t);
+    const val = (i) => document.getElementById(i).value.trim();
+    const errMsg = (e) => e.reason ?? e.shortMessage ?? e.message;
+
+    let provider;
+    async function contract() {
+      provider = new BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner(); // siempre la cuenta activa de MetaMask
+      const { address } = await (await fetch("address.json")).json();
+      return { c: new Contract(address, ABI, signer), me: await signer.getAddress() };
+    }
+
+    document.getElementById("connect").onclick = async () => {
+      await window.ethereum.request({ method: "eth_requestAccounts" });
+      const { me } = await contract();
+      document.getElementById("acct").textContent = me;
+    };
+
+    window.ethereum?.on("accountsChanged", () => location.reload());
+
+    window.addAsset = async () => {
+      try {
+        const { c } = await contract();
+        await (await c.addDigitalAsset(val("assetAddr"))).wait();
+        out("Activo digital subido a la blockchain.");
+      } catch (e) {
+        out("Error: " + errMsg(e));
+      }
+    };
+
+    window.grant = async () => {
+      try {
+        const { c } = await contract();
+        await (await c.grantAccess(val("inst"), KEYS[val("gKind")], Number(val("hours")))).wait();
+        out(`Acceso concedido por ${val("hours")} hora(s).`);
+      } catch (e) {
+        out("Error: " + errMsg(e));
+      }
+    };
+
+    window.revoke = async () => {
+      try {
+        const { c } = await contract();
+        await (await c.revokeAccess(val("inst"), KEYS[val("gKind")])).wait();
+        out("Acceso revocado.");
+      } catch (e) {
+        out("Error: " + errMsg(e));
+      }
+    };
+
+    window.readData = async () => {
+      try {
+        const { c } = await contract();
+        const kind = val("rKind"), customer = val("customer");
+        if (kind === "digital") {
+          const list = await c.accessDigitalAssets(customer);
+          out("Activos digitales:\n" + (list.length ? list.join("\n") : "(ninguno)"));
+          return;
+        }
+        // 1) staticCall: ejecuta sin gastar gas y lanza el error exacto si falla
+        const r = await c.accessCredential.staticCall(customer, KEYS[kind]);
+        // 2) transacción real: deja el registro de auditoría (evento AccessLogged)
+        await (await c.accessCredential(customer, KEYS[kind])).wait();
+        out(`Institución: ${r.fname}\nDatos: ${r.uri}\nIssuer: ${r.issuer}`);
+      } catch (e) {
+        out("Acceso denegado: " + errMsg(e));
+      }
+    };
+  </script>
+</body>
+</html>
+
