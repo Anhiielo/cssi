@@ -94,17 +94,17 @@ npx hardhat node
 ```
 *Deja esta terminal abierta corriendo el nodo RPC en `http://127.0.0.1:8545`.*
 
-### 2. Desplegar contrato, cargar datos y levantar frontend
+### 2. Desplegar contrato y levantar frontend
 En la **Terminal 2**:
 ```powershell
 cd C:\Users\USER\.gemini\antigravity\scratch\cssi
 npm run deploy
-npm run seed
 npm run serve
 ```
-- `npm run deploy`: Compila `contracts/CSSI.sol`, lo despliega y genera `frontend/address.json`.
-- `npm run seed`: Registra las credenciales iniciales de prueba de BancoX y BuroY.
+- `npm run deploy`: Compila `contracts/CSSI.sol`, lo despliega en la red local y genera `frontend/address.json` con la dirección resultante.
 - `npm run serve`: Levanta el servidor estático en **`http://localhost:3000`**.
+
+> **¿Y el seed?** El script `npm run seed` existe como atajo de conveniencia para precargar datos directamente desde la terminal sin pasar por la interfaz. No forma parte del flujo que el paper describe: el paper registra las credenciales a través del flujo Emisor → Verificador usando la interfaz web. Úsalo solo si quieres ir directo a probar el control de acceso sin hacer el flujo completo.
 
 ---
 
@@ -120,24 +120,27 @@ npm run serve
 
 ---
 
-## Paso a paso para probar el flujo completo
+## Flujo completo del paper (Sección 4)
+
+Este es el flujo que el paper implementa de principio a fin. El demo corre sin `npm run seed`; los datos que usa para probar el control de acceso son exactamente los que el verificador subió en los pasos anteriores.
 
 Abre **`http://localhost:3000`** en tu navegador:
 
 ### Paso 1: Emitir credencial (Cuenta #1 - Emisor)
 1. Conecta MetaMask con la **Cuenta #1** (`0x7099...`).
 2. En la sección **0A. Emisor (Issuer)**, deja los valores por defecto (Cliente: `0x90F7...`, BancoX, `CN-ASSET-001`).
-3. Haz clic en **Emitir y firmar VC** y confirma la firma en MetaMask.
-4. Pulsa **Entregar VC al verificador** (copia automáticamente el resultado al Verificador).
+3. Haz clic en **Emitir y firmar VC** y confirma la firma en MetaMask (no es una transacción, solo una firma fuera de cadena).
+4. Pulsa **Entregar VC al verificador** para copiar el VC generado al formulario del verificador.
 
-### Paso 2: Verificar y subir en fragmentos (Cuenta #2 - Verificador)
+### Paso 2: Verificar y subir a la blockchain (Cuenta #2 - Verificador)
 1. Cambia en MetaMask a la **Cuenta #2** (`0x3C44...`).
 2. En la sección **0B. Verificador (Verifier)**, pulsa **Verificar y registrar en blockchain**.
-3. Confirma las transacciones en MetaMask: se valida la firma, se registra la credencial y se suben los 3 fragmentos on-chain (`VC upload success`).
+3. El flujo valida la integridad del JSON, comprueba la firma ECDSA, verifica que el emisor esté autorizado en el contrato, registra la credencial con `storeCredential` y sube el VC dividido en 3 fragmentos con `storeVCChunk`. Al finalizar muestra `VC upload success`.
+4. Confirma cada transacción en MetaMask cuando aparezca la ventana emergente.
 
 ### Paso 3: Registrar activos digitales (Cuenta #3 - Cliente)
 1. Cambia en MetaMask a la **Cuenta #3** (`0x90F7...`).
-2. En la sección **1. Cliente (Holder)**, haz clic en **Obtener dirección desde MetaMask** para cargar tu dirección activa en el campo.
+2. En la sección **1. Cliente (Holder)**, haz clic en **Obtener dirección desde MetaMask** para cargar tu dirección activa.
 3. Pulsa **Registrar activo en blockchain** y confirma la transacción.
 
 ### Paso 4: Autorizar acceso (Cuenta #3 - Cliente)
@@ -151,10 +154,10 @@ Abre **`http://localhost:3000`** en tu navegador:
 2. En la sección **2. Entidad Financiera**, escribe la dirección del cliente:
    `0x90F79bf6EB2c4f870365E785982E1f101E93b906`
 3. Selecciona `asset_info` y pulsa **Consultar credencial**.
-4. La información se mostrará en pantalla y se confirmará la transacción on-chain que emite el evento `AccessLogged`.
+4. El contrato valida permisos y tiempo, entrega los datos y emite el evento `AccessLogged` on-chain (registro inmutable de quién consultó y cuándo).
 
 ### Paso 6: Probar casos de rechazo y revocación
-- **Sin permiso:** Estando en la Cuenta #4, intenta consultar `credit_info`. El contrato rechazará con `Customer does not allow`.
+- **Sin permiso:** Estando en la Cuenta #4, intenta consultar `credit_info`. El contrato rechazará con `Customer does not allow` porque la credencial de BuroY no fue subida en este flujo (no corriste el seed).
 - **Revocación:** Cambia a la Cuenta #3 (Cliente), selecciona `asset_info` y pulsa **Revocar acceso**. Al intentar consultar con la Cuenta #4, el acceso será rechazado.
 - **Expiración temporal:** Autoriza por 1 hora y en la terminal ejecuta:
   ```powershell
