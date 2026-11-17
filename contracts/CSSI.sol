@@ -12,7 +12,7 @@ contract CSSI {
         string fname; // nombre de la institución (F_name del paper)
         bytes32 cn; // número de certificado (CN), no el número de cuenta real
         bytes32 vcHash; // hash del VC completo
-        string uri; // datos de demo (JSON). Ver sección 13
+        string uri; // datos de demo (JSON).
         uint64 issuedAt;
     }
 
@@ -22,8 +22,10 @@ contract CSSI {
     mapping(address => mapping(address => mapping(bytes32 => uint64))) public access;
     // cliente => direcciones de sus activos digitales (wallets, NFTs)
     mapping(address => address[]) private digitalAssets;
+    mapping(address => mapping(bytes32 => bytes[])) private vcChunks;
 
     event CredentialStored(address indexed customer, bytes32 indexed key);
+    event VCChunkStored(address indexed customer, bytes32 indexed key, uint256 index);
     event AccessGranted(address indexed customer, address indexed inst, bytes32 key, uint64 until);
     event AccessRevoked(address indexed customer, address indexed inst, bytes32 key);
     event AccessLogged(address indexed customer, address indexed inst, bytes32 key);
@@ -73,6 +75,22 @@ contract CSSI {
         emit CredentialStored(customer, k);
     }
 
+    function storeVCChunk(address customer, bytes32 key, bytes calldata chunk) external {
+        require(isVerifier[msg.sender], "not verifier");
+        require(creds[customer][key].issuedAt != 0, "Customer profile does not exist");
+        vcChunks[customer][key].push(chunk);
+        emit VCChunkStored(customer, key, vcChunks[customer][key].length - 1);
+    }
+
+    function vcChunkCount(address customer, bytes32 key) external view returns (uint256) {
+        return vcChunks[customer][key].length;
+    }
+
+    function getVCChunk(address customer, bytes32 key, uint256 i) external view returns (bytes memory) {
+        require(i < vcChunks[customer][key].length, "invalid index");
+        return vcChunks[customer][key][i];
+    }
+
     // Activos digitales (flujo de la Figura 3 del paper)
     function addDigitalAsset(address assetAddr) external {
         digitalAssets[msg.sender].push(assetAddr);
@@ -105,10 +123,11 @@ contract CSSI {
         return creds[customer][key];
     }
 
-    function accessDigitalAssets(address customer) external view returns (address[] memory) {
+    function accessDigitalAssets(address customer) external returns (address[] memory) {
         uint64 until = access[customer][msg.sender][DIGITAL_KEY];
         require(until != 0, "Customer does not allow");
         require(block.timestamp <= until, "The access period is expired");
+        emit AccessLogged(customer, msg.sender, DIGITAL_KEY);
         return digitalAssets[customer];
     }
 }

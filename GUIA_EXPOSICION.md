@@ -53,12 +53,12 @@ Antes de proyectar tu pantalla:
 
 - [ ] **Terminal 1 abierta y corriendo:**
   ```powershell
-  cd C:\Users\USER\.gemini\antigravity\scratch\cssi
+  cd cssi
   npx hardhat node
   ```
 - [ ] **Terminal 2 ejecutada:**
   ```powershell
-  cd C:\Users\USER\.gemini\antigravity\scratch\cssi
+  cd cssi
   npx hardhat run scripts/deploy.js --network localhost
   npx hardhat run scripts/seed.js --network localhost
   npx serve frontend
@@ -119,7 +119,7 @@ Antes de proyectar tu pantalla:
 
 ---
 
-### Acto 4: Demostración de Seguridad y Control de Errores (Las Figuras 20 a 22 del Paper)
+### Acto 4: Demostración de Seguridad y Control de Errores (Las Figuras 21 y 22 del Paper)
 
 Muestra cómo el contrato rechaza accesos indebidos:
 
@@ -144,7 +144,7 @@ Muestra cómo el contrato rechaza accesos indebidos:
 #### Caso C: Expiración Temporal (Time-lock)
 - **Acción:** Otorga permiso de 1 hora. Luego en la Terminal 2 ejecuta:
   ```powershell
-  npx hardhat run scripts/advance-time.js --network localhost
+  npm run advance
   ```
   Vuelve al navegador y dale a **Consultar**.
 - **Resultado:**
@@ -152,7 +152,7 @@ Muestra cómo el contrato rechaza accesos indebidos:
   Acceso denegado: The access period is expired
   ```
 - **Qué decir:**
-  > *"Hemos avanzado el reloj de la blockchain en 2 horas mediante llamadas RPC `evm_increaseTime`. El contrato detecta que el timestamp actual superó el límite concedido y bloquea el acceso automáticamente sin necesidad de intervención manual."*
+  > *"Hemos avanzado el reloj de la blockchain en 3601 segundos (1 hora y 1 segundo) mediante el comando `npm run advance`. El contrato detecta que el timestamp actual superó el límite concedido y bloquea el acceso automáticamente sin necesidad de intervención manual."*
 
 ---
 
@@ -161,7 +161,7 @@ Muestra cómo el contrato rechaza accesos indebidos:
 | Pregunta probable del Jurado | Respuesta técnica y precisa |
 | :--- | :--- |
 | **1. ¿Por qué en el contrato los datos se guardan en texto claro en `uri`?** | *"Es una limitación funcional del diseño original del paper. El paper asume datos 'desidentificados'. Sin embargo, en un entorno de producción real, este campo debe almacenar hashes de IPFS o datos cifrados con la clave pública de la institución (cifrado asimétrico ECIES o proxy re-encryption) para garantizar confidencialidad en almacenamiento público."* |
-| **2. ¿Qué pasó con las pruebas de conocimiento cero (zk-SNARKs)?** | *"El paper menciona conceptualmente zk-SNARKs en su introducción, pero en la sección de implementación y resultados no implementó ningún circuito ZK. En nuestro prototipo replicamos con fidelidad la implementación real del paper utilizando firmas digitales criptográficas estándar secp256k1."* |
+| **2. ¿Qué pasó con las pruebas de conocimiento cero (zk-SNARKs)?** | *"El paper menciona conceptualmente zk-SNARKs en el diseño (Sección 2.7 y Paso 5 de la Parte 1), pero no en su implementación. En nuestro prototipo replicamos con fidelidad la implementación real del paper utilizando firmas digitales criptográficas estándar secp256k1."* |
 | **3. Encontraron algún error o discrepancia en el paper?** | *"Sí, encontramos un bug en el pseudocódigo del Algoritmo 2 del paper: los autores escribieron la condición `CurrentTime > Period` para permitir el acceso, lo cual está invertido (significaría permitir el acceso solo cuando ya venció). En nuestra implementación corregimos la condición a `block.timestamp <= until`."* |
 | **4. ¿Quién controla qué instituciones son Issuers o Verifiers?** | *"En este prototipo lo administra una cuenta `admin`. Para llevar esto a producción bancaria, este rol de gobernanza debería recaer en un consorcio regulador (como la Superintendencia de Banca o Banco Central) o una DAO multi-firma."* |
 | **5. ¿Se midió el costo de gas de estas operaciones?** | *"El paper original no midió consumo de gas ni latencia; se limitó a validar la funcionalidad lógica. En nuestra suite de tests unitarios (`npx hardhat test`) los 5 casos de prueba pasan en milisegundos en red local."* |

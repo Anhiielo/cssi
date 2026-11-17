@@ -10,7 +10,8 @@
     section { border: 1px solid #ddd; border-radius: 8px; padding: 1.25rem; margin: 1.25rem 0; background: #fafafa; }
     section h2 { margin-top: 0; font-size: 1.2rem; border-bottom: 1px solid #eee; padding-bottom: 0.5rem; }
     section h3 { font-size: 0.95rem; margin-top: 1rem; margin-bottom: 0.25rem; color: #444; }
-    input, select, button { margin: 6px 0; padding: 8px 10px; width: 100%; box-sizing: border-box; border-radius: 4px; border: 1px solid #ccc; font-size: 0.9rem; }
+    input, select, button, textarea { margin: 6px 0; padding: 8px 10px; width: 100%; box-sizing: border-box; border-radius: 4px; border: 1px solid #ccc; font-size: 0.9rem; }
+    textarea { resize: vertical; font-family: monospace; }
     button { background: #0066cc; color: #fff; border: none; cursor: pointer; font-weight: 500; }
     button:hover { background: #0052a3; }
     button:disabled { background: #999; cursor: not-allowed; }
@@ -27,10 +28,30 @@
   <p>Cuenta conectada: <code id="acct">(ninguna)</code></p>
 
   <section>
+    <h2>0A. Emisor (Issuer)</h2>
+    <h3>Emisión y firma de Credencial Verificable (VC)</h3>
+    <input id="issCustomer" value="0x90F79bf6EB2c4f870365E785982E1f101E93b906" placeholder="0x... (dirección del cliente)">
+    <input id="issInstitution" value="BancoX" placeholder="Nombre de institución (F_name)">
+    <input id="issCn" value="CN-ASSET-001" placeholder="Número de certificado (CN)">
+    <textarea id="issClaims" rows="3" placeholder="Claims en JSON">{"balance":25000,"realEstate":"Casa 120m2"}</textarea>
+    <button id="btnIssueVC" onclick="issueAndSignVC()">Emitir y firmar VC</button>
+    <textarea id="issVcOut" readonly rows="6" placeholder="Aquí aparecerá el VC emitido y firmado..."></textarea>
+    <button id="btnDeliverVC" class="secondary" onclick="deliverVCToVerifier()">Entregar VC al verificador</button>
+  </section>
+
+  <section>
+    <h2>0B. Verificador (Verifier)</h2>
+    <h3>Verificación y registro en blockchain</h3>
+    <textarea id="verVcIn" rows="6" placeholder="Pega aquí el VC con proof..."></textarea>
+    <button id="btnVerifyAndStore" onclick="verifyAndStore()">Verificar y registrar en blockchain</button>
+  </section>
+
+  <section>
     <h2>1. Cliente (Holder)</h2>
 
     <h3>Subir dirección de un activo digital (NFT / Wallet)</h3>
     <input id="assetAddr" placeholder="0x... (dirección del activo digital)">
+    <button id="btnGetMetaMaskAddr" class="secondary" onclick="getMetaMaskAddr()">Obtener dirección desde MetaMask</button>
     <button id="btnAddAsset" onclick="addAsset()">Registrar activo en blockchain</button>
 
     <h3>Control de acceso (Algoritmo 1)</h3>
@@ -61,15 +82,19 @@
   <pre id="out">Listo para interactuar.</pre>
 
   <script type="module">
-    import { BrowserProvider, Contract, id, solidityPackedKeccak256 }
+    import { BrowserProvider, Contract, id, solidityPackedKeccak256, verifyMessage, toUtf8Bytes }
       from "https://cdn.jsdelivr.net/npm/ethers@6.13.4/+esm";
 
     const ABI = [
+      "function isIssuer(address) view returns (bool)",
+      "function storeCredential(address,address,string,bytes32,bytes32,string)",
+      "function storeVCChunk(address,bytes32,bytes)",
+      "function vcChunkCount(address,bytes32) view returns (uint256)",
       "function addDigitalAsset(address)",
       "function grantAccess(address,bytes32,uint32)",
       "function revokeAccess(address,bytes32)",
       "function accessCredential(address,bytes32) returns (tuple(address issuer,string fname,bytes32 cn,bytes32 vcHash,string uri,uint64 issuedAt))",
-      "function accessDigitalAssets(address) view returns (address[])"
+      "function accessDigitalAssets(address) returns (address[])"
     ];
 
     const KEYS = {
@@ -94,8 +119,21 @@
       provider = new BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
       const { address } = await (await fetch("address.json")).json();
-      return { c: new Contract(address, ABI, signer), me: await signer.getAddress() };
+      return { c: new Contract(address, ABI, signer), me: await signer.getAddress(), signer };
     }
+
+    // Restaurar estado guardado en sessionStorage
+    const savedIssued = sessionStorage.getItem("lastIssuedVC");
+    if (savedIssued) {
+      document.getElementById("issVcOut").value = savedIssued;
+    }
+    const savedVerifier = sessionStorage.getItem("verifierVCInput") || savedIssued;
+    if (savedVerifier) {
+      document.getElementById("verVcIn").value = savedVerifier;
+    }
+    document.getElementById("verVcIn").addEventListener("input", (e) => {
+      sessionStorage.setItem("verifierVCInput", e.target.value);
+    });
 
     document.getElementById("connect").onclick = async () => {
       try {
@@ -122,6 +160,164 @@
         btn.textContent = originalText;
       }
     }
+
+    // 0A. Emisor (Issuer)
+    window.issueAndSignVC = () => withLoading("btnIssueVC", async () => {
+      try {
+        const { me, signer } = await contract();
+        let claims;
+        try {
+          claims = JSON.parse(val("issClaims"));
+        } catch {
+          out("Error: Claims debe ser un JSON válido.");
+          return;
+        }
+        const vc = {
+          "@context": ["https://www.w3.org/2018/credentials/v1"],
+          type: ["VerifiableCredential", "FinancialCredential"],
+          issuer: `did:ethr:${me}`,
+          issuanceDate: new Date().toISOString(),
+          credentialSubject: {
+            id: `did:ethr:${val("issCustomer")}`,
+            institution: val("issInstitution"),
+            certificateNumber: val("issCn"),
+            claims,
+          },
+        };
+        const payload = JSON.stringify(vc);
+        out("Solicitando firma con MetaMask...");
+        const jws = await signer.signMessage(payload);
+        const resultado = { ...vc, proof: { type: "EcdsaSecp256k1Signature2019", jws, payload } };
+        const formatted = JSON.stringify(resultado, null, 2);
+        document.getElementById("issVcOut").value = formatted;
+        sessionStorage.setItem("lastIssuedVC", formatted);
+        out("VC emitido y firmado con éxito por " + me);
+      } catch (e) {
+        out("Error al emitir VC: " + errMsg(e));
+      }
+    });
+
+    window.deliverVCToVerifier = () => {
+      const vcText = document.getElementById("issVcOut").value.trim();
+      if (!vcText) {
+        out("No hay ningún VC emitido para entregar.");
+        return;
+      }
+      document.getElementById("verVcIn").value = vcText;
+      sessionStorage.setItem("verifierVCInput", vcText);
+      out("VC entregado al verificador y copiado en su formulario.");
+    };
+
+    // 0B. Verificador (Verifier)
+    window.verifyAndStore = () => withLoading("btnVerifyAndStore", async () => {
+      try {
+        const raw = val("verVcIn");
+        if (!raw) {
+          out("Error: Ingresa un VC en el campo de texto.");
+          return;
+        }
+        let vcObj;
+        try {
+          vcObj = JSON.parse(raw);
+        } catch {
+          out("Error: El VC no es un JSON válido.");
+          return;
+        }
+        if (!vcObj || !vcObj.proof || !vcObj.proof.payload || !vcObj.proof.jws) {
+          out("Error: Estructura de VC inválida (falta el objeto proof).");
+          return;
+        }
+
+        // 1. Integridad: JSON.stringify(vc sin proof) === proof.payload
+        const { proof, ...vcWithoutProof } = vcObj;
+        if (JSON.stringify(vcWithoutProof) !== proof.payload) {
+          out("El contenido del VC no coincide con lo que se firmó");
+          return;
+        }
+        out("1. Contenido verificado contra proof.payload.");
+
+        // 2. Firma del emisor
+        const signerAddr = verifyMessage(proof.payload, proof.jws);
+        const declaredIssuer = (vcObj.issuer || "").replace("did:ethr:", "");
+        if (signerAddr.toLowerCase() !== declaredIssuer.toLowerCase()) {
+          out("La firma no corresponde al emisor declarado");
+          return;
+        }
+        out(`2. Firma válida de emisor: ${signerAddr}`);
+
+        // 3. Consultar isIssuer(firmante)
+        const { c } = await contract();
+        out("3. Verificando emisor en contrato inteligente...");
+        const isTrusted = await c.isIssuer(signerAddr);
+        if (!isTrusted) {
+          out("Emisor no confiable");
+          return;
+        }
+        out("3. Emisor confiable verificado.");
+
+        // 4. storeCredential
+        out("4. Registrando credencial en blockchain (storeCredential)...");
+        const customer = vcObj.credentialSubject.id.replace("did:ethr:", "");
+        const institution = vcObj.credentialSubject.institution;
+        const cn = id(vcObj.credentialSubject.certificateNumber);
+        const vcString = JSON.stringify(vcObj);
+        const vcHash = id(vcString);
+        const claims = JSON.stringify(vcObj.credentialSubject.claims);
+
+        const txCred = await c.storeCredential(
+          customer,
+          signerAddr,
+          institution,
+          cn,
+          vcHash,
+          claims
+        );
+        out("Transacción storeCredential enviada (" + txCred.hash.slice(0, 10) + "...). Esperando confirmación...");
+        await txCred.wait();
+        out("4. storeCredential confirmado en blockchain.");
+
+        // 5. Dividir en 3 fragmentos y enviar storeVCChunk
+        const key = solidityPackedKeccak256(["string", "bytes32"], [institution, cn]);
+        const partLen = Math.ceil(vcString.length / 3);
+        const chunks = [
+          vcString.slice(0, partLen),
+          vcString.slice(partLen, partLen * 2),
+          vcString.slice(partLen * 2)
+        ];
+
+        for (let i = 0; i < chunks.length; i++) {
+          out(`Enviando fragmento ${i + 1} de 3...`);
+          const chunkBytes = toUtf8Bytes(chunks[i]);
+          const txChunk = await c.storeVCChunk(customer, key, chunkBytes);
+          await txChunk.wait();
+          out(`fragmento ${i + 1} de 3 registrado`);
+        }
+
+        // 6. Resultado final
+        const count = await c.vcChunkCount(customer, key);
+        out(`VC upload success\nFragmentos registrados: ${count}\nEmisor: ${signerAddr}`);
+      } catch (e) {
+        const m = errMsg(e);
+        if (m.includes("not verifier")) {
+          out("not verifier");
+        } else {
+          out("Error: " + m);
+        }
+      }
+    });
+
+    // 1. Cliente: Obtener dirección desde MetaMask
+    window.getMetaMaskAddr = async () => {
+      try {
+        const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+        if (accounts && accounts.length > 0) {
+          document.getElementById("assetAddr").value = accounts[0];
+          out("Dirección obtenida desde MetaMask: " + accounts[0]);
+        }
+      } catch (e) {
+        out("Error al obtener dirección: " + errMsg(e));
+      }
+    };
 
     window.addAsset = () => withLoading("btnAddAsset", async () => {
       try {
@@ -167,7 +363,11 @@
         const { c } = await contract();
         const kind = val("rKind"), customer = val("customer");
         if (kind === "digital") {
-          const list = await c.accessDigitalAssets(customer);
+          out("Verificando permisos en blockchain...");
+          const list = await c.accessDigitalAssets.staticCall(customer);
+          out("Registrando evento de auditoría en blockchain (AccessLogged)...");
+          const tx = await c.accessDigitalAssets(customer);
+          await tx.wait();
           out("Activos digitales encontrados:\n" + (list.length ? list.join("\n") : "(ninguno registrado)"));
           return;
         }
