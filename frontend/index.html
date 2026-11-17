@@ -2,50 +2,63 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title>CSSI demo</title>
+  <title>CSSI: Prototipo de Identidad Autosoberana</title>
   <style>
-    body { font-family: sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
-    section { border: 1px solid #ccc; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
-    input, select, button { margin: 4px 0; padding: 6px; width: 100%; box-sizing: border-box; }
-    pre { background: #f4f4f4; padding: 8px; white-space: pre-wrap; word-break: break-all; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; color: #333; }
+    h1 { margin-bottom: 0.5rem; }
+    p.subtitle { color: #666; margin-top: 0; margin-bottom: 1.5rem; font-size: 0.95rem; }
+    section { border: 1px solid #ddd; border-radius: 8px; padding: 1.25rem; margin: 1.25rem 0; background: #fafafa; }
+    section h2 { margin-top: 0; font-size: 1.2rem; border-bottom: 1px solid #eee; padding-bottom: 0.5rem; }
+    section h3 { font-size: 0.95rem; margin-top: 1rem; margin-bottom: 0.25rem; color: #444; }
+    input, select, button { margin: 6px 0; padding: 8px 10px; width: 100%; box-sizing: border-box; border-radius: 4px; border: 1px solid #ccc; font-size: 0.9rem; }
+    button { background: #0066cc; color: #fff; border: none; cursor: pointer; font-weight: 500; }
+    button:hover { background: #0052a3; }
+    button:disabled { background: #999; cursor: not-allowed; }
+    button.secondary { background: #6c757d; }
+    button.secondary:hover { background: #5a6268; }
+    pre { background: #f4f4f4; border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px; white-space: pre-wrap; word-break: break-all; font-size: 0.85rem; font-family: monospace; }
   </style>
 </head>
 <body>
-  <h1>CSSI: demo</h1>
+  <h1>CSSI: Framework Prototype</h1>
+  <p class="subtitle">Control de acceso autosoberano e intercambio de información financiera en Blockchain</p>
+
   <button id="connect">Conectar MetaMask</button>
-  <p>Cuenta activa: <b id="acct">(ninguna)</b></p>
+  <p>Cuenta conectada: <code id="acct">(ninguna)</code></p>
 
   <section>
-    <h2>Cliente (holder)</h2>
-    <h3>Subir dirección de un activo digital</h3>
-    <input id="assetAddr" placeholder="Dirección de tu wallet o NFT, 0x...">
-    <button onclick="addAsset()">Subir a la blockchain</button>
+    <h2>1. Cliente (Holder)</h2>
 
-    <h3>Dar o revocar permiso</h3>
-    <input id="inst" placeholder="Dirección de la institución, 0x...">
+    <h3>Subir dirección de un activo digital (NFT / Wallet)</h3>
+    <input id="assetAddr" placeholder="0x... (dirección del activo digital)">
+    <button id="btnAddAsset" onclick="addAsset()">Registrar activo en blockchain</button>
+
+    <h3>Control de acceso (Algoritmo 1)</h3>
+    <input id="inst" placeholder="0x... (dirección de la entidad financiera)">
     <select id="gKind">
       <option value="asset">Información de activos (asset_info)</option>
-      <option value="credit">Información de crédito (credit_info)</option>
-      <option value="digital">Activos digitales</option>
+      <option value="credit">Información crediticia (credit_info)</option>
+      <option value="digital">Activos digitales (digital_assets)</option>
     </select>
-    <input id="hours" type="number" value="2" min="1" placeholder="Horas de acceso">
-    <button onclick="grant()">Autorizar</button>
-    <button onclick="revoke()">Revocar</button>
+    <input id="hours" type="number" value="2" min="1" placeholder="Horas de validez">
+    <button id="btnGrant" onclick="grant()">Autorizar acceso</button>
+    <button id="btnRevoke" class="secondary" onclick="revoke()">Revocar acceso</button>
   </section>
 
   <section>
-    <h2>Institución financiera</h2>
-    <input id="customer" placeholder="Dirección del cliente, 0x...">
+    <h2>2. Entidad Financiera (Banker / Evaluador)</h2>
+    <h3>Consulta de información autorizada (Algoritmo 2)</h3>
+    <input id="customer" placeholder="0x... (dirección del cliente)">
     <select id="rKind">
       <option value="asset">asset_info</option>
       <option value="credit">credit_info</option>
       <option value="digital">Activos digitales</option>
     </select>
-    <button onclick="readData()">Consultar</button>
+    <button id="btnRead" onclick="readData()">Consultar credencial</button>
   </section>
 
-  <h3>Resultado</h3>
-  <pre id="out">...</pre>
+  <h3>Registro de salida</h3>
+  <pre id="out">Listo para interactuar.</pre>
 
   <script type="module">
     import { BrowserProvider, Contract, id, solidityPackedKeccak256 }
@@ -59,7 +72,6 @@
       "function accessDigitalAssets(address) view returns (address[])"
     ];
 
-    // Mismas claves que usó seed.js
     const KEYS = {
       asset: solidityPackedKeccak256(["string", "bytes32"], ["BancoX", id("CN-ASSET-001")]),
       credit: solidityPackedKeccak256(["string", "bytes32"], ["BuroY", id("CN-CREDIT-001")]),
@@ -68,73 +80,107 @@
 
     const out = (t) => (document.getElementById("out").textContent = t);
     const val = (i) => document.getElementById(i).value.trim();
-    const errMsg = (e) => e.reason ?? e.shortMessage ?? e.message;
+
+    const errMsg = (e) => {
+      const raw = e?.reason ?? e?.shortMessage ?? e?.info?.error?.message ?? e?.message ?? String(e);
+      if (/nonce/i.test(raw)) {
+        return `${raw}\n\n[MetaMask] Desfase de nonce detectado con la red local. Solución: abre MetaMask -> Configuración -> Avanzado -> 'Borrar datos de actividad y de nonce'.`;
+      }
+      return raw;
+    };
 
     let provider;
     async function contract() {
       provider = new BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner(); // siempre la cuenta activa de MetaMask
+      const signer = await provider.getSigner();
       const { address } = await (await fetch("address.json")).json();
       return { c: new Contract(address, ABI, signer), me: await signer.getAddress() };
     }
 
     document.getElementById("connect").onclick = async () => {
-      await window.ethereum.request({ method: "eth_requestAccounts" });
-      const { me } = await contract();
-      document.getElementById("acct").textContent = me;
+      try {
+        await window.ethereum.request({ method: "eth_requestAccounts" });
+        const { me } = await contract();
+        document.getElementById("acct").textContent = me;
+        out("Conectado con cuenta: " + me);
+      } catch (e) {
+        out("Error al conectar: " + errMsg(e));
+      }
     };
 
     window.ethereum?.on("accountsChanged", () => location.reload());
 
-    window.addAsset = async () => {
+    async function withLoading(btnId, fn) {
+      const btn = document.getElementById(btnId);
+      const originalText = btn.textContent;
+      try {
+        btn.disabled = true;
+        btn.textContent = "Procesando...";
+        await fn();
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+
+    window.addAsset = () => withLoading("btnAddAsset", async () => {
       try {
         const { c } = await contract();
-        await (await c.addDigitalAsset(val("assetAddr"))).wait();
-        out("Activo digital subido a la blockchain.");
+        out("Enviando transacción...");
+        const tx = await c.addDigitalAsset(val("assetAddr"));
+        out("Transacción enviada (" + tx.hash.slice(0, 10) + "...). Esperando confirmación...");
+        await tx.wait();
+        out("Activo digital registrado correctamente en la blockchain.");
       } catch (e) {
         out("Error: " + errMsg(e));
       }
-    };
+    });
 
-    window.grant = async () => {
+    window.grant = () => withLoading("btnGrant", async () => {
       try {
         const { c } = await contract();
-        await (await c.grantAccess(val("inst"), KEYS[val("gKind")], Number(val("hours")))).wait();
-        out(`Acceso concedido por ${val("hours")} hora(s).`);
+        out("Enviando autorización...");
+        const tx = await c.grantAccess(val("inst"), KEYS[val("gKind")], Number(val("hours")));
+        out("Transacción enviada (" + tx.hash.slice(0, 10) + "...). Esperando confirmación...");
+        await tx.wait();
+        out(`Acceso concedido exitosamente por ${val("hours")} hora(s).`);
       } catch (e) {
         out("Error: " + errMsg(e));
       }
-    };
+    });
 
-    window.revoke = async () => {
+    window.revoke = () => withLoading("btnRevoke", async () => {
       try {
         const { c } = await contract();
-        await (await c.revokeAccess(val("inst"), KEYS[val("gKind")])).wait();
-        out("Acceso revocado.");
+        out("Enviando revocación...");
+        const tx = await c.revokeAccess(val("inst"), KEYS[val("gKind")]);
+        out("Transacción enviada (" + tx.hash.slice(0, 10) + "...). Esperando confirmación...");
+        await tx.wait();
+        out("Acceso revocado correctamente.");
       } catch (e) {
         out("Error: " + errMsg(e));
       }
-    };
+    });
 
-    window.readData = async () => {
+    window.readData = () => withLoading("btnRead", async () => {
       try {
         const { c } = await contract();
         const kind = val("rKind"), customer = val("customer");
         if (kind === "digital") {
           const list = await c.accessDigitalAssets(customer);
-          out("Activos digitales:\n" + (list.length ? list.join("\n") : "(ninguno)"));
+          out("Activos digitales encontrados:\n" + (list.length ? list.join("\n") : "(ninguno registrado)"));
           return;
         }
-        // 1) staticCall: ejecuta sin gastar gas y lanza el error exacto si falla
+        out("Verificando permisos en blockchain...");
         const r = await c.accessCredential.staticCall(customer, KEYS[kind]);
-        // 2) transacción real: deja el registro de auditoría (evento AccessLogged)
-        await (await c.accessCredential(customer, KEYS[kind])).wait();
-        out(`Institución: ${r.fname}\nDatos: ${r.uri}\nIssuer: ${r.issuer}`);
+        out("Registrando evento de auditoría en blockchain (AccessLogged)...");
+        const tx = await c.accessCredential(customer, KEYS[kind]);
+        await tx.wait();
+        out(`Consulta exitosa.\nInstitución: ${r.fname}\nDatos: ${r.uri}\nIssuer: ${r.issuer}`);
       } catch (e) {
         out("Acceso denegado: " + errMsg(e));
       }
-    };
+    });
   </script>
 </body>
 </html>
-
